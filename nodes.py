@@ -9,7 +9,7 @@ from typing import Optional
 from unittest.mock import patch
 
 from comfy.ldm.flux.layers import timestep_embedding, apply_mod
-from comfy.ldm.lightricks.model import _precompute_freqs_cis
+from comfy.ldm.lightricks.model import LTXBaseModel
 from comfy.ldm.lightricks.symmetric_patchifier import latent_to_pixel_coords
 from comfy.ldm.wan.model import sinusoidal_embedding_1d
 
@@ -598,6 +598,7 @@ def teacache_ltxvmodel_forward(
         frame_rate=25,
         transformer_options={},
         keyframe_idxs=None,
+        denoise_mask=None,
         **kwargs
     ):
         patches_replace = transformer_options.get("patches_replace", {})
@@ -619,16 +620,13 @@ def teacache_ltxvmodel_forward(
         if keyframe_idxs is not None:
             pixel_coords[:, :, -keyframe_idxs.shape[2]:] = keyframe_idxs
 
-        fractional_coords = pixel_coords.to(torch.float32)
-        fractional_coords[:, 0] = fractional_coords[:, 0] * (1.0 / frame_rate)
-
         x = self.patchify_proj(x)
         timestep = timestep * 1000.0
 
         if attention_mask is not None and not torch.is_floating_point(attention_mask):
             attention_mask = (attention_mask - 1).to(x.dtype).reshape((attention_mask.shape[0], 1, -1, attention_mask.shape[-1])) * torch.finfo(x.dtype).max        
-
-        pe = _precompute_freqs_cis(fractional_coords, dim=self.inner_dim, out_dtype=x.dtype)
+        
+        pe = self._prepare_positional_embeddings(pixel_coords, frame_rate, x.dtype)
 
         batch_size = x.shape[0]
         timestep, embedded_timestep = self.adaln_single(
